@@ -5,7 +5,7 @@ load_embed.py
 Hardcoded script to:
   - Load the 'alpindale/two-million-bluesky-posts' dataset from HF
   - Filter posts between a given time range
-  - (NEW) Discard any post whose `text` is empty
+  - Discard any post whose `text` is empty
   - Embed the remaining posts using an EXISTING Hugging Face Inference Endpoint
   - Save partial results (CSV) into ../data/, with the time range in its filename
 
@@ -121,8 +121,6 @@ def main(args):
     ###########################################################################
     # 1. Set up client for the existing endpoint
     ###########################################################################
-    # If you've logged in with huggingface-cli, it should use your local credentials.
-    # Or you can set the environment variable HF_API_TOKEN=...
     print(f"Using existing endpoint: {ENDPOINT_URL}")
     client = InferenceClient(ENDPOINT_URL)
 
@@ -144,7 +142,7 @@ def main(args):
     ds_time = ds.filter(lambda x: is_in_time_range(x, start_dt, end_dt))
     print("Found", len(ds_time), "posts in that time range.")
 
-    # NEW: Discard any post whose text is empty (after stripping)
+    # Discard any post whose text is empty (after stripping)
     print("Discarding posts with empty text...")
     ds_time = ds_time.filter(lambda x: len(x["text"].strip()) > 0)
     print("Remaining after removing empty text:", len(ds_time), "\n")
@@ -157,7 +155,7 @@ def main(args):
     df_time["index"] = df_time.index  # We'll track unique row indices
 
     ###########################################################################
-    # 3. Check partial results and skip what's done
+    # 3. Check partial results once, skip what's done
     ###########################################################################
     partial_df = load_existing_partial_results(output_csv_path)
 
@@ -173,10 +171,12 @@ def main(args):
         sys.exit(0)
 
     ###########################################################################
-    # 4. Embed in batches, saving partial results
+    # 4. Embed in batches, *append* partial results to CSV
     ###########################################################################
-    all_new_rows = []
     indices = list(unprocessed_df.index)
+
+    # We'll keep track if the file already exists, so we know whether to write a header.
+    file_exists = os.path.exists(output_csv_path)
 
     for start_idx in tqdm(range(0, len(indices), BATCH_SIZE), desc="Embedding Batches"):
         batch_indices = indices[start_idx : start_idx + BATCH_SIZE]
@@ -187,30 +187,32 @@ def main(args):
             json={"inputs": batch_texts, "truncate": True},
             task="feature-extraction",
         )
-        # The response is raw bytes, so decode -> JSON -> NumPy
+
+        # The response is raw bytes; decode -> JSON -> NumPy
         batch_embeddings = np.array(json.loads(response.decode()))
 
-        # Merge embeddings back
+        # Prepare a DataFrame of this batch
+        rows_for_csv = []
         for idx_in_batch, row_emb in zip(batch_indices, batch_embeddings):
-            # Get the entire row as a dict
             row_dict = unprocessed_df.loc[idx_in_batch].to_dict()
-            # Convert embedding to JSON for storage
+            # Convert embedding to JSON for storage in CSV
             row_dict["embedding"] = json.dumps(row_emb.tolist())
-            all_new_rows.append(row_dict)
+            rows_for_csv.append(row_dict)
 
-        # Periodic checkpoint
+        new_batch_df = pd.DataFrame(rows_for_csv)
+
+        # Append to CSV: write a header only if the file does not already exist
+        mode = "a" if file_exists else "w"
+        header = not file_exists
+
+        new_batch_df.to_csv(output_csv_path, mode=mode, header=header, index=False)
+        file_exists = True  # After first write, the file definitely exists now
+
+        # Periodic checkpoint message
         if (start_idx // BATCH_SIZE) % args.checkpoint_interval == 0:
-            temp_new_df = pd.DataFrame(all_new_rows)
-            combined_df = pd.concat([partial_df, temp_new_df], ignore_index=True)
-            combined_df.to_csv(output_csv_path, index=False)
-            print(f"[Checkpoint] Saved {len(combined_df)} rows to {output_csv_path}")
+            print(f"[Checkpoint] Appended up to row {start_idx + BATCH_SIZE} in {output_csv_path}")
 
-    # Final save
-    final_new_df = pd.DataFrame(all_new_rows)
-    final_combined_df = pd.concat([partial_df, final_new_df], ignore_index=True)
-    final_combined_df.to_csv(output_csv_path, index=False)
-
-    print(f"\nDone. Saved final CSV with {len(final_combined_df)} rows to {output_csv_path}\n")
+    print(f"\nDone. Appended all new embeddings to CSV: {output_csv_path}\n")
 
 
 if __name__ == "__main__":

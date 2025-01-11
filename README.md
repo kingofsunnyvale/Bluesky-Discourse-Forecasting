@@ -1,7 +1,7 @@
 Goal: Show that discourse on Bluesky has a trajectory within embeddings space
 
 Steps:
-- Embed one day of tweets using NV-Embed-v2
+- Embed one day of tweets using Alibaba-NLP/gte-Qwen2-7B-instruct
 - Cluster embeddings
 - Look at a 1 hour sliding window (sliding forward by 10 minutes). Pick a centroid and find the dimension of movement (in 8000 dimensional space) over a time period. Use PCA to reduce dimensionality and plot embeddings across that dimension of movement. Use something like plotly to make an animation that shows the
 - Why is this useful? **If** discourse can be characterized as a trajectory, you can predict discourse using existing trajectory forecasting methods.
