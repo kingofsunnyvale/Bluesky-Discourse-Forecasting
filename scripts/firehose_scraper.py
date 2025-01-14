@@ -17,7 +17,7 @@ class JSONExtra(json.JSONEncoder):
 client = FirehoseSubscribeReposClient()
 
 # Parameters for batching
-BATCH_SIZE = 100
+BATCH_SIZE = 1000
 posts_buffer = []
 
 # Prepare the CSV output path
@@ -89,4 +89,16 @@ def on_message_handler(message):
                     if len(posts_buffer) >= BATCH_SIZE:
                         flush_posts_to_csv()
 
-client.start(on_message_handler)
+def main():
+    """Main entry point for the script."""
+    print("Starting Bluesky Firehose scraper.")
+    try:
+        client.start(on_message_handler)
+    except KeyboardInterrupt:
+        print("Flushing remaining posts and exiting...")
+    finally:
+        if posts_buffer:
+            flush_posts_to_csv()
+
+if __name__ == "__main__":
+    main()
