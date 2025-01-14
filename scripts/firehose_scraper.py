@@ -1,4 +1,7 @@
 import json
+import csv
+import os
+
 from atproto_client.models import get_or_create
 from atproto import CAR, models
 from atproto_firehose import FirehoseSubscribeReposClient, parse_subscribe_repos_message
@@ -12,6 +15,40 @@ class JSONExtra(json.JSONEncoder):
             return repr(obj)
 
 client = FirehoseSubscribeReposClient()
+
+# Parameters for batching
+BATCH_SIZE = 100
+posts_buffer = []
+
+# Prepare the CSV output path
+# This assumes the script is in a folder named "scripts" at the same level as "data".
+script_dir = os.path.dirname(os.path.abspath(__file__))
+data_dir = os.path.join(script_dir, '..', 'data')
+csv_file_path = os.path.join(data_dir, 'posts.csv')
+
+def flush_posts_to_csv():
+    """Write the accumulated posts (in posts_buffer) to the CSV file and then clear the buffer."""
+    global posts_buffer
+    
+    # Check if CSV already exists to determine if we need headers
+    file_exists = os.path.exists(csv_file_path)
+    
+    # Ensure the data directory exists, just in case
+    os.makedirs(data_dir, exist_ok=True)
+    
+    with open(csv_file_path, 'a', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ["text", "createdAt"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        
+        # If file doesn't exist or was just created, write the header
+        if not file_exists:
+            writer.writeheader()
+        
+        # Write all rows in our buffer
+        writer.writerows(posts_buffer)
+    
+    # Clear the buffer after flushing
+    posts_buffer = []
 
 def on_message_handler(message):
     commit = parse_subscribe_repos_message(message)
@@ -27,12 +64,11 @@ def on_message_handler(message):
 
             # Only process feed posts
             if cooked.py_type == "app.bsky.feed.post":
-                # We'll still look up 'langs' just for checking if 'en' is included
                 text = raw.get("text")
                 langs = raw.get("langs")
                 created_at = raw.get("createdAt")
 
-                # Only print if text is non-empty and 'en' is in langs
+                # Only collect if text is non-empty and 'en' is in langs
                 text_is_non_empty = bool(text and text.strip())
                 langs_is_english = (
                     langs
@@ -41,11 +77,16 @@ def on_message_handler(message):
                 )
 
                 if text_is_non_empty and langs_is_english:
-                    # Construct a dict *without* 'langs'
                     filtered_output = {
                         "text": text,
                         "createdAt": created_at,
                     }
-                    print(json.dumps(filtered_output, cls=JSONExtra, indent=2))
+
+                    # Add the post to our buffer
+                    posts_buffer.append(filtered_output)
+
+                    # If we hit the batch size, flush to CSV
+                    if len(posts_buffer) >= BATCH_SIZE:
+                        flush_posts_to_csv()
 
 client.start(on_message_handler)
