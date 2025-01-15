@@ -1,6 +1,10 @@
-import json
-import csv
 import os
+import json
+from datetime import datetime
+
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from atproto_client.models import get_or_create
 from atproto import CAR, models
@@ -16,41 +20,48 @@ class JSONExtra(json.JSONEncoder):
 
 client = FirehoseSubscribeReposClient()
 
-# Parameters for batching
-BATCH_SIZE = 1000
-posts_buffer = []
-
-# Prepare the CSV output path
-# This assumes the script is in a folder named "scripts" at the same level as "data".
+# We'll keep the data folder creation logic the same
 script_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(script_dir, '..', 'data')
-csv_file_path = os.path.join(data_dir, 'posts.csv')
+os.makedirs(data_dir, exist_ok=True)
 
-def flush_posts_to_csv():
-    """Write the accumulated posts (in posts_buffer) to the CSV file and then clear the buffer."""
-    global posts_buffer
-    
-    # Check if CSV already exists to determine if we need headers
-    file_exists = os.path.exists(csv_file_path)
-    
-    # Ensure the data directory exists, just in case
-    os.makedirs(data_dir, exist_ok=True)
-    
-    with open(csv_file_path, 'a', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ["text", "createdAt"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        
-        # If file doesn't exist or was just created, write the header
-        if not file_exists:
-            writer.writeheader()
-        
-        # Write all rows in our buffer
-        writer.writerows(posts_buffer)
-    
-    # Clear the buffer after flushing
-    posts_buffer = []
+# Track current day and posts for that day
+current_day = None
+posts_for_current_day = []
+
+def get_day_from_timestamp(timestamp: str) -> str:
+    """
+    Parse the ISO8601 'createdAt' timestamp string and return YYYY-MM-DD.
+    Adjust as needed if the format of your timestamps differs.
+    """
+    # Remove any trailing Z if present (e.g., 2023-10-03T13:45:00Z)
+    # and parse into a datetime object
+    timestamp_clean = timestamp.replace('Z', '')
+    dt = datetime.fromisoformat(timestamp_clean)
+    return dt.strftime('%Y-%m-%d')
+
+def flush_posts_to_parquet(day: str, posts: list):
+    """
+    Flush the list of posts to a Parquet file named for the day (YYYY-MM-DD).
+    """
+    if not posts:
+        return
+
+    # Convert the posts to a DataFrame
+    df = pd.DataFrame(posts)
+
+    # Create a pyarrow table
+    table = pa.Table.from_pandas(df)
+
+    # Construct the Parquet file path
+    parquet_file_path = os.path.join(data_dir, f"{day}.parquet")
+
+    # Write the table to Parquet
+    pq.write_table(table, parquet_file_path)
 
 def on_message_handler(message):
+    global current_day, posts_for_current_day
+
     commit = parse_subscribe_repos_message(message)
     if not isinstance(commit, models.ComAtprotoSyncSubscribeRepos.Commit):
         return
@@ -76,18 +87,23 @@ def on_message_handler(message):
                     and "en" in langs
                 )
 
-                if text_is_non_empty and langs_is_english:
-                    filtered_output = {
+                if text_is_non_empty and langs_is_english and created_at:
+                    # Determine which day this post belongs to
+                    day_str = get_day_from_timestamp(created_at)
+
+                    # If this is the first post or the day changed, flush old buffer
+                    if current_day is None:
+                        current_day = day_str
+                    elif day_str != current_day:
+                        flush_posts_to_parquet(current_day, posts_for_current_day)
+                        posts_for_current_day.clear()
+                        current_day = day_str
+
+                    # Add post to current day's buffer
+                    posts_for_current_day.append({
                         "text": text,
                         "createdAt": created_at,
-                    }
-
-                    # Add the post to our buffer
-                    posts_buffer.append(filtered_output)
-
-                    # If we hit the batch size, flush to CSV
-                    if len(posts_buffer) >= BATCH_SIZE:
-                        flush_posts_to_csv()
+                    })
 
 def main():
     """Main entry point for the script."""
@@ -97,8 +113,9 @@ def main():
     except KeyboardInterrupt:
         print("Flushing remaining posts and exiting...")
     finally:
-        if posts_buffer:
-            flush_posts_to_csv()
+        # Flush any remaining posts in the buffer
+        if posts_for_current_day and current_day:
+            flush_posts_to_parquet(current_day, posts_for_current_day)
 
 if __name__ == "__main__":
     main()
