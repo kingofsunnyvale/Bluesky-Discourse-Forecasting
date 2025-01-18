@@ -1,2 +1,8 @@
 *.csv
 *.parquet
+
+# python environment
+.venv/
+
+# direnv-related components
+.envrc
