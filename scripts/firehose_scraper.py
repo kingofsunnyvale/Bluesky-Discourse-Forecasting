@@ -64,7 +64,7 @@ def on_message_handler(message):
                     and "en" in langs
                 )
 
-                if text_is_non_empty and langs_is_english and created_at:
+                if text_is_non_empty and langs_is_english and created_at:                        
                     if len(posts_for_current_day) >= FLUST_THRESHOLD:
                         flushed = flush_posts_to_parquet(current_day, posts_for_current_day)
                         total_posts_written += flushed
