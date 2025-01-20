@@ -77,7 +77,6 @@ def on_message_handler(message):
                         total_posts_written += flushed
                         print(f"Total posts written: {total_posts_written}")
                         print(f"Timestamp of last post written: {posts_for_current_day[-1]['createdAt']}")
-                        posts_for_current_day.clear()
 
                     # Add post to current day's buffer
                     posts_for_current_day.append({
