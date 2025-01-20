@@ -64,8 +64,15 @@ def on_message_handler(message):
                     and "en" in langs
                 )
 
-                if text_is_non_empty and langs_is_english and created_at:                        
-                    if len(posts_for_current_day) >= FLUST_THRESHOLD:
+                if text_is_non_empty and langs_is_english and created_at: 
+                    if current_day != get_current_day():
+                        flushed = flush_posts_to_parquet(current_day, posts_for_current_day)
+                        total_posts_written += flushed
+                        print(f"Total posts written: {total_posts_written}")
+                        print(f"Timestamp of last post written: {posts_for_current_day[-1]['createdAt']}")
+                        posts_for_current_day.clear()
+                        current_day = get_current_day()               
+                    elif len(posts_for_current_day) >= FLUST_THRESHOLD:
                         flushed = flush_posts_to_parquet(current_day, posts_for_current_day)
                         total_posts_written += flushed
                         print(f"Total posts written: {total_posts_written}")
