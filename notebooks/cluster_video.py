@@ -26,6 +26,8 @@ def flatten(column):
     return np.array([np.array(x) for x in column])
 
 centrioids = None
+# PCA should be shared for all datapoints
+pca = PCA(n_components=2)
 
 for dataset_number, dataset in enumerate(tqdm(datasets, desc="Processing datasets")):
     print("Processing dataset", dataset_number)
@@ -69,6 +71,7 @@ for dataset_number, dataset in enumerate(tqdm(datasets, desc="Processing dataset
     if centrioids is None:
         clusters_ranked = np.argsort(class_MSE)
         best_clusters = clusters_ranked[0:10]
+        pca.fit(class_means)
     else:
         # for each point in centroid, find the closest class_mean
         dists = np.zeros((centrioids.shape[0], class_means.shape[0]))
@@ -82,8 +85,6 @@ for dataset_number, dataset in enumerate(tqdm(datasets, desc="Processing dataset
     print(f"Best clusters: {best_clusters}")
 
     # PCA for the top M clusters
-    pca = PCA(n_components=2)
-    pca.fit(class_means)
     pca_mean = pca.transform(class_means)
     pca_datapoints = pca.transform(embeddings)
 
