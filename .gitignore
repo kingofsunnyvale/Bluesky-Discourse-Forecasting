@@ -3,6 +3,7 @@
 
 # python environment
 .venv/
+__pycache__/
 
 # direnv-related components
 .envrc
